@@ -64,36 +64,42 @@ class TRADE(nn.Module):
         ):
         '''
         Args:
-            input_ids
-            target_ids
+            input_ids(Tensor) : shape (batch_size, src_len)
+            target_ids(Tensor) : shape (batch_size, J, trg_len)
             token_type_ids
             attention_mask
+        Returns:
+            all_point_outputs
+            all_gate_outputs
         '''
 
         encoder_outputs, pooled_output = self.encoder(input_ids=input_ids, 
                                                       token_type_ids=token_type_ids, 
                                                       attention_mask=attention_mask)
         ## (batch_size, seq_len, hidden_size), (batch_size, hidden_size)
-        all_point_outputs, all_gate_outputs = self.decoder(
-            input_ids,
-            target_ids,
-            encoder_outputs,
-            attention_mask,
-        )
-
+        all_point_outputs, all_gate_outputs = self.decoder(input_ids,
+                                                           target_ids,
+                                                           encoder_outputs,
+                                                           attention_mask,
+                                                           )
+        
         return all_point_outputs, all_gate_outputs
     
     def predict(self,
                 input_ids,
                 token_type_ids=None, 
-                attention_mask=None, 
+                attention_mask=None,
+                max_len
                 ):
         '''
         Args:
-            src (LongTensor): input to encoder. shape '(batch_size, src_len)'
-        
+            input_ids(Tensor) : shape (batch_size, src_len)
+            token_type_ids(Tensor) : shape (batch_size, src_len)
+            attention_mask(Tensor) : shape (batch_size, src_len)
+            max_len(Int) : maximum number of decoding steps.
         Returns:
-            output_tokens (LongTensor): predicted tokens. shape'(batch_size, max_position)'
+            all_point_outputs: shape (batch_size, J, max_len, vocab_size)
+            all_gate_outputs: shape (batch_size, J, n_gate)
         '''
 #         padding_mask = self.generate_padding_mask(src)
         
@@ -101,23 +107,14 @@ class TRADE(nn.Module):
                                                       token_type_ids=token_type_ids, 
                                                       attention_mask=attention_mask)
         
+        all_point_outputs, all_gate_outputs = self.decoder.predict(input_ids,
+                                                                   encoder_outputs,
+                                                                   attention_mask,
+                                                                   max_len
+                                                                   )
         
-        output_tokens = (torch.ones((self.config.batch_size, self.config.max_position))\
-                         * self.TRG.vocab.stoi['<pad>']).long().to(self.device) 
-        ## (batch_size, max_position)
-        output_tokens[:,0] = self.TRG.vocab.stoi['<sos>']
-        for trg_index in range(1, self.config.max_position):
-            trg = output_tokens[:,:trg_index] # (batch_size, trg_index)
-            causal_mask = self.generate_causal_mask(trg) # (trg_index, trg_index)
-            output, _ = self.decoder(input_indices = trg,
-                                     encoder_output = encoder_output,
-                                     enc_dec_attention_padding_mask = padding_mask,
-                                     causal_mask = causal_mask) # (batch_size, trg_index, emb_dim)
-            output = self.linear(output) # (batch_size, trg_index, # trg vocab)
-            output = torch.argmax(output, dim = -1) # (batch_size, trg_index)
-            output_tokens[:,trg_index] = output[:,-1]
-        
-        return output_tokens
+        return all_point_outputs, all_gate_outputs
+    
 
 class GRUEncoder(nn.Module):
     def __init__(self, vocab_size, d_model, n_layer, dropout, proj_dim=None, pad_idx=0):
@@ -487,7 +484,7 @@ class TransformerDecoder(nn.Module):
 #         )
         self.n_gate = config.n_gate
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.w_gen = nn.Linear(self.hidden_size * 3, 1) ## p^gen계산에 쓰이는 W_1임.
+        self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
         self.sigmoid = nn.Sigmoid()
         self.w_gate = nn.Linear(self.hidden_size, config.n_gate) ## G_j 계산에 쓰이는 W_g임.
         
@@ -531,21 +528,121 @@ class TransformerDecoder(nn.Module):
         
         return causal_mask
 
-# padding mask는 decoder에는 필요없다.
-#     def generate_padding_mask(self, 
-#                               src: torch.LongTensor):
-#         '''Generate padding mask
+    def predict(self,
+                input_ids,
+                token_type_ids=None, 
+                attention_mask=None,
+                max_len
+                ):
+        '''
+        Args:
+            input_ids(Tensor) : shape (batch_size, src_len)
+            token_type_ids(Tensor) : shape (batch_size, src_len)
+            attention_mask(Tensor) : shape (batch_size, src_len)
+            max_len(Int) : maximum number of decoding steps.
+        Returns:
+            all_point_outputs: shape (batch_size, J, max_len, vocab_size)
+            all_gate_outputs: shape (batch_size, J, n_gate)
+        '''
+#         causal_mask = self.generate_causal_mask(target_ids) # shape (trg_len+1, trg_len+1)
+#         ## causal_mask는 parallel decoding을 위한 처리를 따로 할 필요없다. 알아서 브로드캐스팅 됨. MultiHeadAttention의 코드 참고.
+
+        input_masks = input_masks.ne(1) ## input_masks의 True와 False를 반전시킨다.(True는 False로, False는 True로)
+
         
-#         Args:
-#             src (LongTensor): input to encoder. shape '(batch_size, src_len)'
+        slot = torch.LongTensor(self.slot_embed_idx).to(input_ids.device) 
+        '''domain-slot을 토크나이징하여 얻은 인덱스들에 패딩까지 넣은것이 slot임
+        shape (J, 4). 현재 데이터에서는 4가 토크나이징된 domain-slot들 중에 가장 긴 것이다.
+        '''
+        slot_e = torch.sum(self.embedding(slot), 1)  # (J, embedding_dim = 768)
+        '''self.embedding(slot).size() = torch.Size([J, slot_length, hidden_size])
+        한 domain-slot에 대한 모든 토큰들의 임베딩벡터를 합친다. -> (J, hidden_size)
+        --> slot_e[0]은 0번째 slot의 embedding vector인 것임.
+        '''
+        batch_size = encoder_output.size(0)
+        J, hidden_size = slot_e.size()
+        ##inputs_embed에 dom_slot에 대한 embeding vecotor를 맨 앞에 넣어준다.(J*batch_size, trg_len+1, hidden_size)로 만들어야 함.
         
-#         Returns:
-#             padding_mask (Tensor): shape '(batch_size, src_len)'
-#         '''
-#         padding_mask = src.eq(self.SRC.vocab.stoi['<pad>']).to(self.device)
+        slot_e = slot_e.repeat(batch_size, 1) # (J*batch_size, hidden_size)
+        input_masks = input_masks.repeat_interleave(J, dim=0)
+        '''(J*batch_size, src_len)
+        첫번째 데이터에 대한 input_mask가 J번 반복되고 두번째 데이터에 대한 input_mask가 J번 반복되고 ... '''
+        input_ids = input_ids.repeat_interleave(J, dim=0)
+        '''(J*batch_size, src_len)
+        첫번째 데이터에 대한 input_id가 J번 반복되고 두번째 데이터에 대한 input_id가 J번 반복되고 ...
+        '''
         
-#         return padding_mask
-    
+        decoder_input = torch.empty(J*batch_size, max_len, hidden_size) # (J*batch_size, trg_len+1, hidden_size)
+        all_point_outputs = torch.zeros(batch_size, J, max_len, self.vocab_size).to(
+            input_ids.device
+        )
+        
+        decoder_input[:,0,:] = slot_e
+        for trg_index in range(0, max_len):
+            decoder_input_temp = decoder_input[:,:trg_index+1,:]
+            causal_mask = self.generate_causal_mask(trg)
+            for decoder_layer in self.layers:
+                decoder_input_temp, _, _ = decoder_layer(decoder_input_temp, 
+                                                                    encoder_output,
+                                                                    input_masks,
+                                                                    causal_mask)
+            '''decoder_input_temp shape (J*batch_size, trg_index, hidden_size)
+            '''
+            decoder_output_temp = decoder_input_temp[:,trg_index,:] # (J*batch_size, hidden_size)
+            
+        
+            attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
+            '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
+            -> (J*batch_size, src_len, 1)
+            '''
+            attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
+            attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
+            
+            
+            attn_v = torch.matmul(decoder_output_temp, self.embed.weight.transpose(0, 1))
+            '''(J*batch_size, hidden_size) x (hidden_size, vocab_size)
+            -> (J*batch_size, vocab_size)
+            '''
+            attn_vocab = F.softmax(attn_v, -1)
+
+            p_gen = self.sigmoid(
+                    self.w_gen(decoder_output)
+                ) # (J*batch_size, 1)
+
+            p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+            ## (J*batch_size, vocab_size)
+            p_context_ptr.scatter_add_(1, input_ids, attn_history)
+            '''
+            p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
+            0<=j<=seq_len.
+            --> (J*batch_size, vocab_size)
+            '''
+
+            p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+            '''attn_vocab shape (J*batch_size, vocab_size)
+            p_context_ptr shape (J*batch_size, vocab_size)
+            p_gen shape = (J*batch_size, 1)
+            '''
+            all_point_outputs[:,:,trg_index,:] = p_final.view(batch_size, J, self.vocab_size)
+            
+            output_indices = torch.argmax(p_final, dim = -1) # (J*batch_size, 1)
+            output_indeces_embed = self.embed(output_indices).unsqueeze(1)
+            # shape of self.embed(output_indices) -> (J*batch_size, 1, hidden_size)
+            if trg_index < max_len-1:
+                decoder_input[:,trg_index+1,:] = output_indices_embed
+                
+            if trg_index == 0:
+                gated_logit = self.w_gate(decoder_output_temp)
+                '''decoder_output_temp shape -> (J*batch_size, hidden_size)
+                gated_logit shape -> (J*batch_size, n_gate)
+                '''
+                all_gate_outputs = gated_logit.view(batch_size, J, self.n_gate)
+                ## (batch_size, J, n_gate)
+        
+        
+
+        
+        return all_point_outputs, all_gate_outputs
     
     
     def forward(self,
@@ -590,7 +687,7 @@ class TransformerDecoder(nn.Module):
         J, hidden_size = slot_e.size()
         trg_len = target_ids.size(-1)
         ##inputs_embed에 dom_slot에 대한 embeding vecotor를 맨 앞에 넣어준다.(J*batch_size, trg_len+1, hidden_size)로 만들어야 함.
-        decoder_input = torch.embty(J*batch_size, trg_len+1, hidden_size) # (J*batch_size, trg_len+1, hidden_size)
+        decoder_input = torch.empty(J*batch_size, trg_len+1, hidden_size) # (J*batch_size, trg_len+1, hidden_size)
         slot_e = slot_e.repeat(batch_size, 1) # (J*batch_size, hidden_size)
         target_ids = target_ids.reshape(J*batch_size, -1) ## (J*batch_size, trg_len)
         targets_embed = self.embed(target_ids) ## (J*batch_size, trg_len, hidden_size)
@@ -617,7 +714,7 @@ class TransformerDecoder(nn.Module):
         for decoder_layer in self.layers:
             decoder_input, _, attn_weights = decoder_layer(decoder_input, 
                                                            encoder_output,
-                                                           enc_dec_attention_padding_mask,
+                                                           input_masks,
                                                            causal_mask)
             '''decoder_input shape (J*batch_size, trg_len+1, hidden_size)
                attn_weights shape (J*batch_size, # attn head, trg_len+1, src_len)
