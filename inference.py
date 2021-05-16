@@ -8,7 +8,7 @@ from tqdm import tqdm
 from transformers import BertTokenizer
 
 from data_utils import (WOSDataset, get_examples_from_dialogues)
-from model import TRADE
+from model_transformer import TRADE
 from preprocessor import TRADEPreprocessor
 
 
@@ -34,7 +34,7 @@ def inference(model, eval_loader, processor, device):
 ['wild-bonus-5601:식당_택시_12-0', 'wild-bonus-5601:식당_택시_12-1', 'wild-bonus-5601:식당_택시_12-2', 'wild-bonus-5601:식당_택시_12-3']
         '''
         with torch.no_grad():
-            o, g = model(input_ids, segment_ids, input_masks, 9)
+            o, g = model.predict(input_ids=input_ids, max_len=13, token_type_ids=segment_ids, attention_mask=input_masks)
             '''shape of o : (batch_size, J, max_decoding_step=9, vocab_size = 35000)
                shape of g : (batch_size, J, num_slot_gates)
             '''

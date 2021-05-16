@@ -17,7 +17,7 @@ from data_utils import (WOSDataset, get_examples_from_dialogues, load_dataset, s
 from eval_utils import DSTEvaluator
 from evaluation import _evaluation
 from inference import inference
-from model import TRADE, masked_cross_entropy_for_value
+from model_transformer import TRADE, masked_cross_entropy_for_value
 from preprocessor import TRADEPreprocessor
 
 
@@ -40,8 +40,8 @@ if __name__ == "__main__":
     parser.add_argument("--word_dropout", type=int, default=0)
     ################ transformer decoder로 추가된 argument.
     parser.add_argument("--max_position", type=int, help='허용 가능한 input token의 최대 갯수' ,default=512) 
-    parser.add_argument("--attention_drop_out", type=int, default=0)
-    parser.add_argument("--num_attention_heads", type=int, help='hidden_size는 head갯수로 나뉠 수 있어야 한다.' default=6)
+    parser.add_argument("--attention_drop_out", type=int, default=0.1)
+    parser.add_argument("--num_attention_heads", type=int, help='hidden_size는 head갯수로 나뉠 수 있어야 한다.', default=6)
     parser.add_argument("--ffn_dim", type=int, default=768*2)
     parser.add_argument("--num_decoder_layers", type=int, default=6)
     ################ transformer decoder로 추가된 argument.
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--teacher_forcing_ratio", type=float, default=0.5)
     args = parser.parse_args()
 
-    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}'], name = args.model_dir)
+    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}', 'Transformer Decoder'], name = args.model_dir)
 
     
     # args.data_dir = os.environ['SM_CHANNEL_TRAIN']
@@ -271,7 +271,7 @@ dev_labels['wild-bonus-5601:식당_택시_12-2'] = ['식당-가격대-dontcare',
 #                 input_ids, segment_ids, input_masks, target_ids.size(-1), tf
 #             )
             all_point_outputs, all_gate_outputs = model(
-                input_ids, target_ids, input_masks, target_ids.size(-1), tf
+                input_ids, target_ids, segment_ids, input_masks, 
             )
             
             # generation loss
