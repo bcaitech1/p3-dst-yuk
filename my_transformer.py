@@ -230,7 +230,8 @@ class SinusoidalPositionalEncodedEmbedding(nn.Embedding):
         pe[:, 0::2] = torch.sin(pos_freq)
         pe[:, 1::2] = torch.cos(pos_freq)
         
-        pe.detach_()
+        pe.detach_() ## pe가 leaf노드가 되도록 한다.
+        # pe.requires_grad = True
         
         return pe
 

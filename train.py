@@ -40,10 +40,10 @@ if __name__ == "__main__":
     parser.add_argument("--word_dropout", type=int, default=0)
     ################ transformer decoder로 추가된 argument.
     parser.add_argument("--max_position", type=int, help='허용 가능한 input token의 최대 갯수' ,default=512) 
-    parser.add_argument("--attention_drop_out", type=int, default=0.1)
+    parser.add_argument("--attention_drop_out", type=int, default=0.05)
     parser.add_argument("--num_attention_heads", type=int, help='hidden_size는 head갯수로 나뉠 수 있어야 한다.', default=6)
     parser.add_argument("--ffn_dim", type=int, default=768*2)
-    parser.add_argument("--num_decoder_layers", type=int, default=6)
+    parser.add_argument("--num_decoder_layers", type=int, default=3)
     ################ transformer decoder로 추가된 argument.
     parser.add_argument(
         "--model_name_or_path",
@@ -66,7 +66,8 @@ if __name__ == "__main__":
     parser.add_argument("--teacher_forcing_ratio", type=float, default=0.5)
     args = parser.parse_args()
 
-    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}', 'Transformer Decoder'], name = args.model_dir)
+    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}', 'Transformer Decoder', f'lr {args.learning_rate}' \
+    , 'learn position embedding', f'num_decoder_layer', 'no pos embed'], name = args.model_dir)
 
     
     # args.data_dir = os.environ['SM_CHANNEL_TRAIN']
@@ -257,19 +258,7 @@ dev_labels['wild-bonus-5601:식당_택시_12-2'] = ['식당-가격대-dontcare',
             ipdb>  target_ids.size()
             torch.Size([4, 45, 5])
             '''
-            
-#             # teacher forcing
-#             if (
-#                 args.teacher_forcing_ratio > 0.0
-#                 and random.random() < args.teacher_forcing_ratio
-#             ):
-#                 tf = target_ids
-#             else:
-#                 tf = None
 
-#             all_point_outputs, all_gate_outputs = model(
-#                 input_ids, segment_ids, input_masks, target_ids.size(-1), tf
-#             )
             all_point_outputs, all_gate_outputs = model(
                 input_ids, target_ids, segment_ids, input_masks, 
             )
@@ -287,6 +276,7 @@ dev_labels['wild-bonus-5601:식당_택시_12-2'] = ['식당-가격대-dontcare',
                 gating_ids.contiguous().view(-1),
             )
             loss = loss_1 + loss_2
+
 
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)

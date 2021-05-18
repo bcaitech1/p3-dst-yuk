@@ -13,8 +13,9 @@ def masked_cross_entropy_for_value(logits, target, pad_idx=0):
         logits (Tensor): shape (batch_size, J, max_len, vocab_size)
         target (Tensor): shape (batch_size*J*max_len). 각 배치의 각 slot에 대한 예측 value 토큰들이 쫙 나열된 상태. (batch_size, J, max_len).view(-1)
     '''
-    mask = target.ne(pad_idx) ## target에서 값이 0인 부분은 True로, 나머지는 False로 이루어진 벡터. target과 같은 shape을 가진다.
+    mask = target.ne(pad_idx) ## target에서 값이 0인 부분은 False로, 나머지는 True로 이루어진 벡터. target과 같은 shape을 가진다.
     logits_flat = logits.view(-1, logits.size(-1)) # shape (batch_size*J*max_len, vocab_size)
+    assert logits_flat.size(0) == target.size(0), f"logtis_flat.size(0) must match with target.size(0) -> {logtis_flat.size(0)} != {target.size(0)}"
     log_probs_flat = torch.log(logits_flat) # shape (batch_size*J*max_len, vocab_size)
     target_flat = target.view(-1, 1) # shape (batch_size*J*max_len, 1)
     losses_flat = -torch.gather(log_probs_flat, dim=1, index=target_flat) # losses_flat[i, 0] = log_probs_flat[i, target_flat[i,0]]
@@ -171,7 +172,7 @@ class DecoderLayer(nn.Module):
         '''
         
         # msked self attention
-        residual = x
+        residual = x 
         x, self_attn_weights = self.self_attn(query = x,
                                               key = x,
                                               attention_mask = causal_mask)
@@ -179,12 +180,13 @@ class DecoderLayer(nn.Module):
         x = self.self_attn_layer_norm(x + residual)
         
         # encoder-decoder attention
-        residual = x
+        residual = x # 이건 decoder input의 weighted sum이다.
         x, enc_dec_attn_weights = self.enc_dec_attn(query = x,
                                                     key = encoder_output,
                                                     attention_mask = enc_dec_attention_padding_mask)
+        # 여기서 x는 encoder output의 weighted sum이다.
         x = F.dropout(x, p = self.attention_drop_out, training = self.training)
-        x = self.enc_dec_attn_layer_norm(x + residual)
+        x = self.enc_dec_attn_layer_norm(x + residual) ## decoder input의 weighted sum과 encoder output의 weighted sum을 더해 준다.
         
         # position-wise feed forward
         residual = x
@@ -223,8 +225,8 @@ class TransformerDecoder(nn.Module):
 #         )
         self.n_gate = config.n_gate
         self.dropout = nn.Dropout(config.attention_drop_out)
-        self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
-        self.sigmoid = nn.Sigmoid()
+        # self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
+        # self.sigmoid = nn.Sigmoid()
         self.w_gate = nn.Linear(self.hidden_size, config.n_gate) ## G_j 계산에 쓰이는 W_g임.
         
         ########################기존 트랜스포머 코드들
@@ -288,8 +290,6 @@ class TransformerDecoder(nn.Module):
             all_point_outputs: shape (batch_size, J, max_len, vocab_size)
             all_gate_outputs: shape (batch_size, J, n_gate)
         '''
-#         causal_mask = self.generate_causal_mask(target_ids) # shape (trg_len+1, trg_len+1)
-#         ## causal_mask는 parallel decoding을 위한 처리를 따로 할 필요없다. 알아서 브로드캐스팅 됨. MultiHeadAttention의 코드 참고.
         
         
         input_masks = input_masks.ne(1) ## input_masks의 True와 False를 반전시킨다.(True는 False로, False는 True로)
@@ -328,6 +328,8 @@ class TransformerDecoder(nn.Module):
         decoder_input[:,0,:] = slot_e
         for trg_index in range(0, max_len):
             decoder_input_temp = decoder_input[:,:trg_index+1,:] # (J*batch_size, trg_index+1, hidden_size)
+            pos_embed = self.embed_positions(torch.zeros(J*batch_size, trg_index)) # (trg_index+1, hidden_size)
+            decoder_input_temp += pos_embed
             causal_mask = self.generate_causal_mask(trg_index+1)
             for decoder_layer in self.layers:
                 decoder_input_temp, _, _ = decoder_layer(decoder_input_temp, 
@@ -341,12 +343,12 @@ class TransformerDecoder(nn.Module):
             decoder_output_temp = decoder_input_temp[:,trg_index,:] # (J*batch_size, hidden_size)
             
         
-            attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
-            '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
-            -> (J*batch_size, src_len, 1)
-            '''
-            attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
-            attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
+            # attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
+            # '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
+            # -> (J*batch_size, src_len, 1)
+            # '''
+            # attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
+            # attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
             
             
             attn_v = torch.matmul(decoder_output_temp, self.embed.weight.transpose(0, 1))
@@ -355,22 +357,23 @@ class TransformerDecoder(nn.Module):
             '''
             attn_vocab = F.softmax(attn_v, -1)
 
-            p_gen = self.sigmoid(
-                    self.w_gen(decoder_output_temp)
-                ) # (J*batch_size, 1)
+            # p_gen = self.sigmoid(
+            #         self.w_gen(decoder_output_temp)
+            #     ) # (J*batch_size, 1)
             
             
 
-            p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-            ## (J*batch_size, vocab_size)
-            p_context_ptr.scatter_add_(1, input_ids, attn_history)
-            '''
-            p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
-            0<=j<=seq_len.
-            --> (J*batch_size, vocab_size)
-            '''
+            # p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+            # ## (J*batch_size, vocab_size)
+            # p_context_ptr.scatter_add_(1, input_ids, attn_history)
+            # '''
+            # p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
+            # 0<=j<=seq_len.
+            # --> (J*batch_size, vocab_size)
+            # '''
 
-            p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+            # p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+            p_final = attn_vocab
             '''attn_vocab shape (J*batch_size, vocab_size)
             p_context_ptr shape (J*batch_size, vocab_size)
             p_gen shape = (J*batch_size, 1)
@@ -415,7 +418,6 @@ class TransformerDecoder(nn.Module):
             enc_dec_attn_weigths (list): list of enc-dec attention weights of each Decoder layer.
         '''
 
-        
         # dom_slot자리를 고려하여 causal_mask를 한칸더 크게 만들기 - 했음.
         trg_len = target_ids.size(-1)
         causal_mask = self.generate_causal_mask(trg_len+1) # shape (trg_len+1, trg_len+1)
@@ -442,7 +444,7 @@ class TransformerDecoder(nn.Module):
         J, hidden_size = slot_e.size()
         
         ##inputs_embed에 dom_slot에 대한 embeding vecotor를 맨 앞에 넣어준다.(J*batch_size, trg_len+1, hidden_size)로 만들어야 함.
-        decoder_input = torch.empty(J*batch_size, trg_len+1, hidden_size).to(input_ids.device) # (J*batch_size, trg_len+1, hidden_size)
+        decoder_input = torch.zeros(J*batch_size, trg_len+1, hidden_size).to(input_ids.device) # (J*batch_size, trg_len+1, hidden_size)
         slot_e = slot_e.repeat(batch_size, 1) # (J*batch_size, hidden_size)
         target_ids = target_ids.reshape(J*batch_size, -1) ## (J*batch_size, trg_len)
         targets_embed = self.embed(target_ids) ## (J*batch_size, trg_len, hidden_size)
@@ -484,7 +486,11 @@ class TransformerDecoder(nn.Module):
                attn_weights shape (J*batch_size, # attn head, trg_len+1, src_len)
             '''
         
-        decoder_output = decoder_input # (J*batch_size, trg_len+1, hidden_size)
+        decoder_output = decoder_input[:,:-1,:] # (J*batch_size, trg_len, hidden_size)
+        ## 마지막꺼는 <SEP>에 대한 예측결과이므로 뺀다. 실제로 machine translation할 떄도 디코더 input이 <sos> w1 w2 w3 ... w_n <eos>와 같이 되어 있고
+        ## 참값은 w1 w2 w3 ... w_n <eos> 이므로 input과 output의 길이가 1만큼 차이남. 그래서 w_n의 예측값까지만 쓰고 <eos>에 대한 것은 버린다.
+        ## 다만 이는 한 배치의 가장 길이가 긴 데이터에 대한 얘기이고 나머지의 경우는 마지막 예측결과를 빼는 것은 실제도 <PAD>에 대한 예측결과를 빼는 것과 같다.
+        ## 그래도 상관없는게 어차피 loss에서 <PAD>토큰에 대한것은 무시되기 때문에 괜찮음.
 
 
         # Parallel Decoding -> 모든 slot에 대한 디코딩을 동시에 진행한다.
@@ -492,41 +498,42 @@ class TransformerDecoder(nn.Module):
 
 
 
-        attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
-        '''(J*batch_size, trg_len+1, hidden_size) x (J*batch_size, hidden_size, src_len)
-        -> (J*batch_size, trg_len+1, src_len)
-        '''
-#         attn_e = attn_weights.sum(dim=1) ## (J*batch_size, trg_len+1, src_len)
-#         attn_e = p_history.sum(dim=1) ## (J*batch_size, src_len)
-        attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len+1, src_len)
-        attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len+1, src_len)
+#         attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
+#         '''(J*batch_size, trg_len+1, hidden_size) x (J*batch_size, hidden_size, src_len)
+#         -> (J*batch_size, trg_len+1, src_len)
+#         '''
+# #         attn_e = attn_weights.sum(dim=1) ## (J*batch_size, trg_len+1, src_len)
+# #         attn_e = p_history.sum(dim=1) ## (J*batch_size, src_len)
+#         attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len+1, src_len)
+#         attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len+1, src_len)
         
         attn_v = torch.matmul(decoder_output, self.embed.weight.transpose(0, 1))
-        '''(J*batch_size, trg_len+1, hidden_size) x (hidden_size, vocab_size)
-        -> (J*batch_size, trg_len+1, vocab_size)
+        '''(J*batch_size, trg_len, hidden_size) x (hidden_size, vocab_size)
+        -> (J*batch_size, trg_len, vocab_size)
         '''
         attn_vocab = F.softmax(attn_v, -1)
         
-        p_gen = self.sigmoid(
-                self.w_gen(decoder_output)
-            ) # (J*batch_size, trg_len+1, 1)
+        # p_gen = self.sigmoid(
+        #         self.w_gen(decoder_output)
+        #     ) # (J*batch_size, trg_len+1, 1)
         
-        p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-        ## (J*batch_size, trg_len+1, vocab_size)
-        p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len+1,1), attn_history)
-        '''attn_history shape (J*batch_size, trg_len+1, src_len).
-        input_ids.unsqueeze(1).repeat(1,trg_len+1,1) shape -> (J*batch_size, trg_len+1, src_len).
-        input_ids.unsqueeze(1).repeat(1,trg_len+1,1)[0] 은 input_ids[0,:]가 trg_len+1번 반복되어 있음.
+        # p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+        # ## (J*batch_size, trg_len+1, vocab_size)
+        # p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len+1,1), attn_history)
+        # '''attn_history shape (J*batch_size, trg_len+1, src_len).
+        # input_ids.unsqueeze(1).repeat(1,trg_len+1,1) shape -> (J*batch_size, trg_len+1, src_len).
+        # input_ids.unsqueeze(1).repeat(1,trg_len+1,1)[0] 은 input_ids[0,:]가 trg_len+1번 반복되어 있음.
         
-        p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
+        # p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
+        # '''
+        
+        # p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+        p_final = attn_vocab
+        '''attn_vocab shape (J*batch_size, trg_len, vocab_size)
+        p_context_ptr shape (J*batch_size, trg_len, vocab_size)
+        p_gen shape = (J*batch_size, trg_len, 1)
         '''
-        
-        p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
-        '''attn_vocab shape (J*batch_size, trg_len+1, vocab_size)
-        p_context_ptr shape (J*batch_size, trg_len+1, vocab_size)
-        p_gen shape = (J*batch_size, trg_len+1, 1)
-        '''
-        all_point_outputs = p_final.view(batch_size, J, trg_len+1, -1)
+        all_point_outputs = p_final.view(batch_size, J, trg_len, -1)
         ## (batch_size, J, trg_len+1, vocab_size)
         
         gated_logit = self.w_gate(decoder_output[:,0,:])

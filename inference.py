@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import DataLoader, SequentialSampler
 from tqdm import tqdm
 from transformers import BertTokenizer
+import pdb
 
 from data_utils import (WOSDataset, get_examples_from_dialogues)
 from model_transformer import TRADE
@@ -64,7 +65,7 @@ def inference(model, eval_loader, processor, device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default='/opt/ml/input/data/eval_dataset')
-    parser.add_argument("--model_dir", type=str, default='results_boolean_slot/model-29.bin')
+    parser.add_argument("--model_dir", type=str, default='TRADE_v3/model-1.bin')
     parser.add_argument("--output_dir", type=str, default='./inference')
     parser.add_argument("--eval_batch_size", type=int, default=32)
     args = parser.parse_args()
@@ -116,7 +117,7 @@ if __name__ == "__main__":
     
     json.dump(
         predictions,
-        open(f"{args.output_dir}/predictions_boolean_slot.csv", "w"),
+        open(f"{args.output_dir}/predictions_TRADE_v3.csv", "w"),
         indent=2,
         ensure_ascii=False,
     )
