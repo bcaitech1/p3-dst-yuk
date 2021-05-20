@@ -220,16 +220,14 @@ class TransformerDecoder(nn.Module):
             self.proj_layer = None
         self.hidden_size = config.proj_dim if config.proj_dim else config.hidden_size
 
-#         self.gru = nn.GRU(
-#             self.hidden_size, self.hidden_size, 1, dropout=dropout, batch_first=True
-#         )
+
         self.n_gate = config.n_gate
         self.dropout = nn.Dropout(config.attention_drop_out)
         self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
         self.sigmoid = nn.Sigmoid()
         self.w_gate = nn.Linear(self.hidden_size, config.n_gate) ## G_j 계산에 쓰이는 W_g임.
         
-        ########################기존 트랜스포머 코드들
+
         self.attention_drop_out = config.attention_drop_out
         
         self.embed_positions = SinusoidalPositionalEncodedEmbedding(config.max_position,
@@ -266,10 +264,7 @@ class TransformerDecoder(nn.Module):
         
         '''dom_slot을 고려하여 trg.size(1)+1처럼 1을 더해준다.
         '''
-#         if not is_inference:
-#             tmp = torch.ones(trg.size(-1)+1, trg.size(-1)+1, dtype = torch.bool)
-#         else:
-#             tmp = torch.ones(trg.size(1), trg.size(1), dtype = torch.bool)
+
         tmp = torch.ones(size, size, dtype = torch.bool)
         causal_mask = torch.tril(tmp,-1).transpose(0,1).contiguous().to(self.device)
         return causal_mask
@@ -291,7 +286,6 @@ class TransformerDecoder(nn.Module):
             all_gate_outputs: shape (batch_size, J, n_gate)
         '''
         
-        # pdb.set_trace()
         input_masks = input_masks.ne(1) ## input_masks의 True와 False를 반전시킨다.(True는 False로, False는 True로)
 
         
@@ -493,7 +487,6 @@ class TransformerDecoder(nn.Module):
         ## 그래도 상관없는게 어차피 loss에서 <PAD>토큰에 대한것은 무시되기 때문에 괜찮음.
 
 
-        # Parallel Decoding -> 모든 slot에 대한 디코딩을 동시에 진행한다.
         
 
 

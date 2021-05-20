@@ -70,12 +70,9 @@ if __name__ == "__main__":
     f'num_decoder_layer {args.num_decoder_layers}', f'attn drop out {args.attention_drop_out}', 'use p^history'], name = args.model_dir)
 
     
-    # args.data_dir = os.environ['SM_CHANNEL_TRAIN']
-    # args.model_dir = os.environ['SM_MODEL_DIR']
 
     # random seed 고정
     set_seed(args.random_seed)
-    # seed_everything(args.random_seed)
 
     # Data Loading
     train_data_file = f"{args.data_dir}/train_dials.json"
