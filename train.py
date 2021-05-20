@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="../../input/data/train_dataset")
-    parser.add_argument("--model_dir", type=str, default="TRADE_v3")
+    parser.add_argument("--model_dir", type=str, default="TRADE_v5")
     parser.add_argument("--train_batch_size", type=int, default=16)
     parser.add_argument("--eval_batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
@@ -40,10 +40,10 @@ if __name__ == "__main__":
     parser.add_argument("--word_dropout", type=int, default=0)
     ################ transformer decoder로 추가된 argument.
     parser.add_argument("--max_position", type=int, help='허용 가능한 input token의 최대 갯수' ,default=512) 
-    parser.add_argument("--attention_drop_out", type=int, default=0.05)
+    parser.add_argument("--attention_drop_out", type=int, default=0.4)
     parser.add_argument("--num_attention_heads", type=int, help='hidden_size는 head갯수로 나뉠 수 있어야 한다.', default=6)
     parser.add_argument("--ffn_dim", type=int, default=768*2)
-    parser.add_argument("--num_decoder_layers", type=int, default=3)
+    parser.add_argument("--num_decoder_layers", type=int, default=2)
     ################ transformer decoder로 추가된 argument.
     parser.add_argument(
         "--model_name_or_path",
@@ -66,8 +66,8 @@ if __name__ == "__main__":
     parser.add_argument("--teacher_forcing_ratio", type=float, default=0.5)
     args = parser.parse_args()
 
-    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}', 'Transformer Decoder', f'lr {args.learning_rate}' \
-    , 'learn position embedding', f'num_decoder_layer', 'no pos embed'], name = args.model_dir)
+    wandb.init(tags=[f'BERT encoder={args.model_name_or_path}', 'add yes,no slot', f'word_dropout {args.word_dropout}', 'Transformer Decoder', \
+    f'num_decoder_layer {args.num_decoder_layers}', f'attn drop out {args.attention_drop_out}', 'use p^history'], name = args.model_dir)
 
     
     # args.data_dir = os.environ['SM_CHANNEL_TRAIN']

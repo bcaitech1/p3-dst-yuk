@@ -225,8 +225,8 @@ class TransformerDecoder(nn.Module):
 #         )
         self.n_gate = config.n_gate
         self.dropout = nn.Dropout(config.attention_drop_out)
-        # self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
-        # self.sigmoid = nn.Sigmoid()
+        self.w_gen = nn.Linear(self.hidden_size, 1) ## p^gen계산에 쓰이는 W_1임.
+        self.sigmoid = nn.Sigmoid()
         self.w_gate = nn.Linear(self.hidden_size, config.n_gate) ## G_j 계산에 쓰이는 W_g임.
         
         ########################기존 트랜스포머 코드들
@@ -291,7 +291,7 @@ class TransformerDecoder(nn.Module):
             all_gate_outputs: shape (batch_size, J, n_gate)
         '''
         
-        
+        # pdb.set_trace()
         input_masks = input_masks.ne(1) ## input_masks의 True와 False를 반전시킨다.(True는 False로, False는 True로)
 
         
@@ -306,7 +306,7 @@ class TransformerDecoder(nn.Module):
         '''
         batch_size = encoder_output.size(0)
         J, hidden_size = slot_e.size()
-        ##inputs_embed에 dom_slot에 대한 embeding vecotor를 맨 앞에 넣어준다.(J*batch_size, trg_len+1, hidden_size)로 만들어야 함.
+        ##inputs_embed에 dom_slot에 대한 embeding vecotor를 맨 앞에 넣어준다.(J*batch_size, trg_len, hidden_size)로 만들어야 함.
         
         slot_e = slot_e.repeat(batch_size, 1) # (J*batch_size, hidden_size)
         input_masks = input_masks.repeat_interleave(J, dim=0)
@@ -343,12 +343,12 @@ class TransformerDecoder(nn.Module):
             decoder_output_temp = decoder_input_temp[:,trg_index,:] # (J*batch_size, hidden_size)
             
         
-            # attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
-            # '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
-            # -> (J*batch_size, src_len, 1)
-            # '''
-            # attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
-            # attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
+            attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
+            '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
+            -> (J*batch_size, src_len, 1)
+            '''
+            attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
+            attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
             
             
             attn_v = torch.matmul(decoder_output_temp, self.embed.weight.transpose(0, 1))
@@ -357,23 +357,23 @@ class TransformerDecoder(nn.Module):
             '''
             attn_vocab = F.softmax(attn_v, -1)
 
-            # p_gen = self.sigmoid(
-            #         self.w_gen(decoder_output_temp)
-            #     ) # (J*batch_size, 1)
+            p_gen = self.sigmoid(
+                    self.w_gen(decoder_output_temp)
+                ) # (J*batch_size, 1)
             
             
 
-            # p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-            # ## (J*batch_size, vocab_size)
-            # p_context_ptr.scatter_add_(1, input_ids, attn_history)
-            # '''
-            # p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
-            # 0<=j<=seq_len.
-            # --> (J*batch_size, vocab_size)
-            # '''
+            p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+            ## (J*batch_size, vocab_size)
+            p_context_ptr.scatter_add_(1, input_ids, attn_history)
+            '''
+            p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
+            0<=j<=seq_len.
+            --> (J*batch_size, vocab_size)
+            '''
 
-            # p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
-            p_final = attn_vocab
+            p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+            # p_final = attn_vocab
             '''attn_vocab shape (J*batch_size, vocab_size)
             p_context_ptr shape (J*batch_size, vocab_size)
             p_gen shape = (J*batch_size, 1)
@@ -483,7 +483,7 @@ class TransformerDecoder(nn.Module):
                                                            input_masks,
                                                            causal_mask)
             '''decoder_input shape (J*batch_size, trg_len+1, hidden_size)
-               attn_weights shape (J*batch_size, # attn head, trg_len+1, src_len)
+               attn_weights shape (J*batch_size, # attn head, trg_len, src_len)
             '''
         
         decoder_output = decoder_input[:,:-1,:] # (J*batch_size, trg_len, hidden_size)
@@ -498,14 +498,13 @@ class TransformerDecoder(nn.Module):
 
 
 
-#         attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
-#         '''(J*batch_size, trg_len+1, hidden_size) x (J*batch_size, hidden_size, src_len)
-#         -> (J*batch_size, trg_len+1, src_len)
-#         '''
-# #         attn_e = attn_weights.sum(dim=1) ## (J*batch_size, trg_len+1, src_len)
-# #         attn_e = p_history.sum(dim=1) ## (J*batch_size, src_len)
-#         attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len+1, src_len)
-#         attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len+1, src_len)
+        attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
+        '''(J*batch_size, trg_len, hidden_size) x (J*batch_size, hidden_size, src_len)
+        -> (J*batch_size, trg_len, src_len)
+        '''
+
+        attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len, src_len)
+        attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len, src_len)
         
         attn_v = torch.matmul(decoder_output, self.embed.weight.transpose(0, 1))
         '''(J*batch_size, trg_len, hidden_size) x (hidden_size, vocab_size)
@@ -513,28 +512,28 @@ class TransformerDecoder(nn.Module):
         '''
         attn_vocab = F.softmax(attn_v, -1)
         
-        # p_gen = self.sigmoid(
-        #         self.w_gen(decoder_output)
-        #     ) # (J*batch_size, trg_len+1, 1)
+        p_gen = self.sigmoid(
+                self.w_gen(decoder_output)
+            ) # (J*batch_size, trg_len, 1)
         
-        # p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-        # ## (J*batch_size, trg_len+1, vocab_size)
-        # p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len+1,1), attn_history)
-        # '''attn_history shape (J*batch_size, trg_len+1, src_len).
-        # input_ids.unsqueeze(1).repeat(1,trg_len+1,1) shape -> (J*batch_size, trg_len+1, src_len).
-        # input_ids.unsqueeze(1).repeat(1,trg_len+1,1)[0] 은 input_ids[0,:]가 trg_len+1번 반복되어 있음.
+        p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+        ## (J*batch_size, trg_len, vocab_size)
+        p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len,1), attn_history)
+        '''attn_history shape (J*batch_size, trg_len, src_len).
+        input_ids.unsqueeze(1).repeat(1,trg_len,1) shape -> (J*batch_size, trg_len, src_len).
+        input_ids.unsqueeze(1).repeat(1,trg_len,1)[0] 은 input_ids[0,:]가 trg_len번 반복되어 있음.
         
-        # p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
-        # '''
+        p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
+        '''
         
-        # p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
-        p_final = attn_vocab
+        p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+        # p_final = attn_vocab
         '''attn_vocab shape (J*batch_size, trg_len, vocab_size)
         p_context_ptr shape (J*batch_size, trg_len, vocab_size)
         p_gen shape = (J*batch_size, trg_len, 1)
         '''
         all_point_outputs = p_final.view(batch_size, J, trg_len, -1)
-        ## (batch_size, J, trg_len+1, vocab_size)
+        ## (batch_size, J, trg_len, vocab_size)
         
         gated_logit = self.w_gate(decoder_output[:,0,:])
         '''decoder_output[:,0,:] shape -> (J*batch_size, hidden_size)

@@ -35,7 +35,7 @@ def inference(model, eval_loader, processor, device):
 ['wild-bonus-5601:식당_택시_12-0', 'wild-bonus-5601:식당_택시_12-1', 'wild-bonus-5601:식당_택시_12-2', 'wild-bonus-5601:식당_택시_12-3']
         '''
         with torch.no_grad():
-            o, g = model.predict(input_ids=input_ids, max_len=13, token_type_ids=segment_ids, attention_mask=input_masks)
+            o, g = model.predict(input_ids=input_ids, max_len=9, token_type_ids=segment_ids, attention_mask=input_masks)
             '''shape of o : (batch_size, J, max_decoding_step=9, vocab_size = 35000)
                shape of g : (batch_size, J, num_slot_gates)
             '''
@@ -65,7 +65,7 @@ def inference(model, eval_loader, processor, device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default='/opt/ml/input/data/eval_dataset')
-    parser.add_argument("--model_dir", type=str, default='TRADE_v3/model-1.bin')
+    parser.add_argument("--model_dir", type=str, default='TRADE_v4/model-8.bin')
     parser.add_argument("--output_dir", type=str, default='./inference')
     parser.add_argument("--eval_batch_size", type=int, default=32)
     args = parser.parse_args()
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     
     json.dump(
         predictions,
-        open(f"{args.output_dir}/predictions_TRADE_v3.csv", "w"),
+        open(f"{args.output_dir}/predictions_TRADE_v4_model-8.csv", "w"),
         indent=2,
         ensure_ascii=False,
     )
