@@ -337,12 +337,12 @@ class TransformerDecoder(nn.Module):
             decoder_output_temp = decoder_input_temp[:,trg_index,:] # (J*batch_size, hidden_size)
             
         
-            attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
-            '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
-            -> (J*batch_size, src_len, 1)
-            '''
-            attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
-            attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
+#             attn_e = torch.bmm(encoder_output, decoder_output_temp.unsqueeze(-1))
+#             '''(J*batch_size, src_len, hidden_size) x (J*batch_size, hidden_size, 1)
+#             -> (J*batch_size, src_len, 1)
+#             '''
+#             attn_e = attn_e.squeeze(-1).masked_fill(input_masks, -1e9)  ## (J*batch_size, src_len)
+#             attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, src_len)
             
             
             attn_v = torch.matmul(decoder_output_temp, self.embed.weight.transpose(0, 1))
@@ -351,23 +351,23 @@ class TransformerDecoder(nn.Module):
             '''
             attn_vocab = F.softmax(attn_v, -1)
 
-            p_gen = self.sigmoid(
-                    self.w_gen(decoder_output_temp)
-                ) # (J*batch_size, 1)
+#             p_gen = self.sigmoid(
+#                     self.w_gen(decoder_output_temp)
+#                 ) # (J*batch_size, 1)
             
             
 
-            p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-            ## (J*batch_size, vocab_size)
-            p_context_ptr.scatter_add_(1, input_ids, attn_history)
-            '''
-            p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
-            0<=j<=seq_len.
-            --> (J*batch_size, vocab_size)
-            '''
+#             p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+#             ## (J*batch_size, vocab_size)
+#             p_context_ptr.scatter_add_(1, input_ids, attn_history)
+#             '''
+#             p_context_ptr[i][input_ids[i][j]] += attn_history[i][j], 0<=i<=J*batch_size, 
+#             0<=j<=seq_len.
+#             --> (J*batch_size, vocab_size)
+#             '''
 
-            p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
-            # p_final = attn_vocab
+#             p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+            p_final = attn_vocab
             '''attn_vocab shape (J*batch_size, vocab_size)
             p_context_ptr shape (J*batch_size, vocab_size)
             p_gen shape = (J*batch_size, 1)
@@ -481,23 +481,20 @@ class TransformerDecoder(nn.Module):
             '''
         
         decoder_output = decoder_input[:,:-1,:] # (J*batch_size, trg_len, hidden_size)
-        ## 마지막꺼는 <SEP>에 대한 예측결과이므로 뺀다. 실제로 machine translation할 떄도 디코더 input이 <sos> w1 w2 w3 ... w_n <eos>와 같이 되어 있고
-        ## 참값은 w1 w2 w3 ... w_n <eos> 이므로 input과 output의 길이가 1만큼 차이남. 그래서 w_n의 예측값까지만 쓰고 <eos>에 대한 것은 버린다.
-        ## 다만 이는 한 배치의 가장 길이가 긴 데이터에 대한 얘기이고 나머지의 경우는 마지막 예측결과를 빼는 것은 실제도 <PAD>에 대한 예측결과를 빼는 것과 같다.
-        ## 그래도 상관없는게 어차피 loss에서 <PAD>토큰에 대한것은 무시되기 때문에 괜찮음.
+
 
 
         
 
 
 
-        attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
-        '''(J*batch_size, trg_len, hidden_size) x (J*batch_size, hidden_size, src_len)
-        -> (J*batch_size, trg_len, src_len)
-        '''
+#         attn_e = torch.bmm(decoder_output, encoder_output.transpose(-1,-2))
+#         '''(J*batch_size, trg_len, hidden_size) x (J*batch_size, hidden_size, src_len)
+#         -> (J*batch_size, trg_len, src_len)
+#         '''
 
-        attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len, src_len)
-        attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len, src_len)
+#         attn_e = attn_e.masked_fill(input_masks.unsqueeze(1), -1e9)  ## (J*batch_size, trg_len, src_len)
+#         attn_history = F.softmax(attn_e, -1)  ## (J*batch_size, trg_len, src_len)
         
         attn_v = torch.matmul(decoder_output, self.embed.weight.transpose(0, 1))
         '''(J*batch_size, trg_len, hidden_size) x (hidden_size, vocab_size)
@@ -505,22 +502,22 @@ class TransformerDecoder(nn.Module):
         '''
         attn_vocab = F.softmax(attn_v, -1)
         
-        p_gen = self.sigmoid(
-                self.w_gen(decoder_output)
-            ) # (J*batch_size, trg_len, 1)
+#         p_gen = self.sigmoid(
+#                 self.w_gen(decoder_output)
+#             ) # (J*batch_size, trg_len, 1)
         
-        p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
-        ## (J*batch_size, trg_len, vocab_size)
-        p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len,1), attn_history)
-        '''attn_history shape (J*batch_size, trg_len, src_len).
-        input_ids.unsqueeze(1).repeat(1,trg_len,1) shape -> (J*batch_size, trg_len, src_len).
-        input_ids.unsqueeze(1).repeat(1,trg_len,1)[0] 은 input_ids[0,:]가 trg_len번 반복되어 있음.
+#         p_context_ptr = torch.zeros_like(attn_vocab).to(input_ids.device)
+#         ## (J*batch_size, trg_len, vocab_size)
+#         p_context_ptr.scatter_add_(2, input_ids.unsqueeze(1).repeat(1,trg_len,1), attn_history)
+#         '''attn_history shape (J*batch_size, trg_len, src_len).
+#         input_ids.unsqueeze(1).repeat(1,trg_len,1) shape -> (J*batch_size, trg_len, src_len).
+#         input_ids.unsqueeze(1).repeat(1,trg_len,1)[0] 은 input_ids[0,:]가 trg_len번 반복되어 있음.
         
-        p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
-        '''
+#         p_context_ptr[i][j][input_ids[i][j][k]] += attn_history[i][j][k]
+#         '''
         
-        p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
-        # p_final = attn_vocab
+#         p_final = p_gen * attn_vocab + (1 - p_gen) * p_context_ptr
+        p_final = attn_vocab
         '''attn_vocab shape (J*batch_size, trg_len, vocab_size)
         p_context_ptr shape (J*batch_size, trg_len, vocab_size)
         p_gen shape = (J*batch_size, trg_len, 1)
